@@ -11,14 +11,8 @@ contract Lender is Ownable {
     event PoolCreated(bytes32 indexed poolId, Pool pool);
     event PoolUpdated(bytes32 indexed poolId, Pool pool);
     event PoolBalanceUpdated(bytes32 indexed poolId, uint256 newBalance);
-    event PoolInterestRateUpdated(
-        bytes32 indexed poolId,
-        uint256 newInterestRate
-    );
-    event PoolMaxLoanRatioUpdated(
-        bytes32 indexed poolId,
-        uint256 newMaxLoanRatio
-    );
+    event PoolInterestRateUpdated(bytes32 indexed poolId, uint256 newInterestRate);
+    event PoolMaxLoanRatioUpdated(bytes32 indexed poolId, uint256 newMaxLoanRatio);
     event Borrowed(
         address indexed borrower,
         address indexed lender,
@@ -47,12 +41,7 @@ contract Lender is Ownable {
         uint256 auctionLength
     );
     event LoanBought(uint256 loanId);
-    event LoanSiezed(
-        address indexed borrower,
-        address indexed lender,
-        uint256 indexed loanId,
-        uint256 collateral
-    );
+    event LoanSiezed(address indexed borrower, address indexed lender, uint256 indexed loanId, uint256 collateral);
     event Refinanced(uint256 loanId);
 
     /// @notice the maximum interest rate is 1000%
@@ -82,6 +71,8 @@ contract Lender is Ownable {
     /// can only be called by the owner
     /// @param _fee the new fee
     function setLenderFee(uint256 _fee) external onlyOwner {
+        // e: fee cannot be greater than 50% and by defualt it is 10%
+        // q: what happens if it is set to 0
         if (_fee > 5000) revert FeeTooHigh();
         lenderFee = _fee;
     }
@@ -90,6 +81,8 @@ contract Lender is Ownable {
     /// can only be called by the owner
     /// @param _fee the new fee
     function setBorrowerFee(uint256 _fee) external onlyOwner {
+        // e: fee cannot be greater than 5% and by defualt it is 0.5%
+        // q: what happens if it is set to 0
         if (_fee > 500) revert FeeTooHigh();
         borrowerFee = _fee;
     }
@@ -105,11 +98,11 @@ contract Lender is Ownable {
     /*                         LOAN INFO                          */
     /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-    function getPoolId(
-        address lender,
-        address loanToken,
-        address collateralToken
-    ) public pure returns (bytes32 poolId) {
+    function getPoolId(address lender, address loanToken, address collateralToken)
+        public
+        pure
+        returns (bytes32 poolId)
+    {
         poolId = keccak256(abi.encode(lender, loanToken, collateralToken));
     }
 
@@ -130,40 +123,29 @@ contract Lender is Ownable {
     function setPool(Pool calldata p) public returns (bytes32 poolId) {
         // validate the pool
         if (
-            p.lender != msg.sender ||
-            p.minLoanSize == 0 ||
-            p.maxLoanRatio == 0 ||
-            p.auctionLength == 0 ||
-            p.auctionLength > MAX_AUCTION_LENGTH ||
-            p.interestRate > MAX_INTEREST_RATE
-        ) revert PoolConfig();
+            p.lender != msg.sender || p.minLoanSize == 0 || p.maxLoanRatio == 0 || p.auctionLength == 0
+                || p.auctionLength > MAX_AUCTION_LENGTH || p.interestRate > MAX_INTEREST_RATE
+        ) revert PoolConfig("first");
 
         // check if they already have a pool balance
         poolId = getPoolId(p.lender, p.loanToken, p.collateralToken);
 
         // you can't change the outstanding loans
-        if (p.outstandingLoans != pools[poolId].outstandingLoans)
-            revert PoolConfig();
-
+        if (p.outstandingLoans != pools[poolId].outstandingLoans) {
+            revert PoolConfig("Can't change loan");
+        }
+        // e: pool balance is the amount of loan token
         uint256 currentBalance = pools[poolId].poolBalance;
 
         if (p.poolBalance > currentBalance) {
             // if new balance > current balance then transfer the difference from the lender
-            IERC20(p.loanToken).transferFrom(
-                p.lender,
-                address(this),
-                p.poolBalance - currentBalance
-            );
+            IERC20(p.loanToken).transferFrom(p.lender, address(this), p.poolBalance - currentBalance);
         } else if (p.poolBalance < currentBalance) {
             // if new balance < current balance then transfer the difference back to the lender
-            IERC20(p.loanToken).transfer(
-                p.lender,
-                currentBalance - p.poolBalance
-            );
+            IERC20(p.loanToken).transfer(p.lender, currentBalance - p.poolBalance);
         }
 
         emit PoolBalanceUpdated(poolId, p.poolBalance);
-
         if (pools[poolId].lender == address(0)) {
             // if the pool doesn't exist then create it
             emit PoolCreated(poolId, p);
@@ -181,14 +163,10 @@ contract Lender is Ownable {
     /// @param amount the amount to add
     function addToPool(bytes32 poolId, uint256 amount) external {
         if (pools[poolId].lender != msg.sender) revert Unauthorized();
-        if (amount == 0) revert PoolConfig();
+        if (amount == 0) revert PoolConfig("zero amount");
         _updatePoolBalance(poolId, pools[poolId].poolBalance + amount);
         // transfer the loan tokens from the lender to the contract
-        IERC20(pools[poolId].loanToken).transferFrom(
-            msg.sender,
-            address(this),
-            amount
-        );
+        IERC20(pools[poolId].loanToken).transferFrom(msg.sender, address(this), amount);
     }
 
     /// @notice remove from the pool balance
@@ -197,7 +175,7 @@ contract Lender is Ownable {
     /// @param amount the amount to remove
     function removeFromPool(bytes32 poolId, uint256 amount) external {
         if (pools[poolId].lender != msg.sender) revert Unauthorized();
-        if (amount == 0) revert PoolConfig();
+        if (amount == 0) revert PoolConfig("zero amount");
         _updatePoolBalance(poolId, pools[poolId].poolBalance - amount);
         // transfer the loan tokens from the contract to the lender
         IERC20(pools[poolId].loanToken).transfer(msg.sender, amount);
@@ -209,7 +187,7 @@ contract Lender is Ownable {
     /// @param maxLoanRatio the new max loan ratio
     function updateMaxLoanRatio(bytes32 poolId, uint256 maxLoanRatio) external {
         if (pools[poolId].lender != msg.sender) revert Unauthorized();
-        if (maxLoanRatio == 0) revert PoolConfig();
+        if (maxLoanRatio == 0) revert PoolConfig("zero maxLoanRatio ");
         pools[poolId].maxLoanRatio = maxLoanRatio;
         emit PoolMaxLoanRatioUpdated(poolId, maxLoanRatio);
     }
@@ -220,7 +198,7 @@ contract Lender is Ownable {
     /// @param interestRate the new interest rate
     function updateInterestRate(bytes32 poolId, uint256 interestRate) external {
         if (pools[poolId].lender != msg.sender) revert Unauthorized();
-        if (interestRate > MAX_INTEREST_RATE) revert PoolConfig();
+        if (interestRate > MAX_INTEREST_RATE) revert PoolConfig("Invalid Interest");
         pools[poolId].interestRate = interestRate;
         emit PoolInterestRateUpdated(poolId, interestRate);
     }
@@ -237,7 +215,7 @@ contract Lender is Ownable {
             // get the pool info
             Pool memory pool = pools[poolId];
             // make sure the pool exists
-            if (pool.lender == address(0)) revert PoolConfig();
+            if (pool.lender == address(0)) revert PoolConfig("Zero lender address");
             // validate the loan
             if (debt < pool.minLoanSize) revert LoanTooSmall();
             if (debt > pool.poolBalance) revert LoanTooLarge();
@@ -268,20 +246,10 @@ contract Lender is Ownable {
             // transfer the loan tokens from the pool to the borrower
             IERC20(loan.loanToken).transfer(msg.sender, debt - fees);
             // transfer the collateral tokens from the borrower to the contract
-            IERC20(loan.collateralToken).transferFrom(
-                msg.sender,
-                address(this),
-                collateral
-            );
+            IERC20(loan.collateralToken).transferFrom(msg.sender, address(this), collateral);
             loans.push(loan);
             emit Borrowed(
-                msg.sender,
-                pool.lender,
-                loans.length - 1,
-                debt,
-                collateral,
-                pool.interestRate,
-                block.timestamp
+                msg.sender, pool.lender, loans.length - 1, debt, collateral, pool.interestRate, block.timestamp
             );
         }
     }
@@ -295,49 +263,22 @@ contract Lender is Ownable {
             // get the loan info
             Loan memory loan = loans[loanId];
             // calculate the interest
-            (
-                uint256 lenderInterest,
-                uint256 protocolInterest
-            ) = _calculateInterest(loan);
+            (uint256 lenderInterest, uint256 protocolInterest) = _calculateInterest(loan);
 
-            bytes32 poolId = getPoolId(
-                loan.lender,
-                loan.loanToken,
-                loan.collateralToken
-            );
+            bytes32 poolId = getPoolId(loan.lender, loan.loanToken, loan.collateralToken);
 
             // update the pool balance
-            _updatePoolBalance(
-                poolId,
-                pools[poolId].poolBalance + loan.debt + lenderInterest
-            );
+            _updatePoolBalance(poolId, pools[poolId].poolBalance + loan.debt + lenderInterest);
             pools[poolId].outstandingLoans -= loan.debt;
-
+            // q: it seems the fee was collected twice, one during borrow and the other during repay
             // transfer the loan tokens from the borrower to the pool
-            IERC20(loan.loanToken).transferFrom(
-                msg.sender,
-                address(this),
-                loan.debt + lenderInterest
-            );
+            IERC20(loan.loanToken).transferFrom(msg.sender, address(this), loan.debt + lenderInterest);
             // transfer the protocol fee to the fee receiver
-            IERC20(loan.loanToken).transferFrom(
-                msg.sender,
-                feeReceiver,
-                protocolInterest
-            );
+            IERC20(loan.loanToken).transferFrom(msg.sender, feeReceiver, protocolInterest);
             // transfer the collateral tokens from the contract to the borrower
-            IERC20(loan.collateralToken).transfer(
-                loan.borrower,
-                loan.collateral
-            );
+            IERC20(loan.collateralToken).transfer(loan.borrower, loan.collateral);
             emit Repaid(
-                msg.sender,
-                loan.lender,
-                loanId,
-                loan.debt,
-                loan.collateral,
-                loan.interestRate,
-                loan.startTimestamp
+                msg.sender, loan.lender, loanId, loan.debt, loan.collateral, loan.interestRate, loan.startTimestamp
             );
             // delete the loan
             delete loans[loanId];
@@ -352,10 +293,7 @@ contract Lender is Ownable {
     /// can only be called by the lender
     /// @param loanIds the ids of the loans to give
     /// @param poolIds the id of the pools to give to
-    function giveLoan(
-        uint256[] calldata loanIds,
-        bytes32[] calldata poolIds
-    ) external {
+    function giveLoan(uint256[] calldata loanIds, bytes32[] calldata poolIds) external {
         for (uint256 i = 0; i < loanIds.length; i++) {
             uint256 loanId = loanIds[i];
             bytes32 poolId = poolIds[i];
@@ -367,17 +305,15 @@ contract Lender is Ownable {
             Pool memory pool = pools[poolId];
             // validate the new loan
             if (pool.loanToken != loan.loanToken) revert TokenMismatch();
-            if (pool.collateralToken != loan.collateralToken)
+            if (pool.collateralToken != loan.collateralToken) {
                 revert TokenMismatch();
+            }
             // new interest rate cannot be higher than old interest rate
             if (pool.interestRate > loan.interestRate) revert RateTooHigh();
             // auction length cannot be shorter than old auction length
             if (pool.auctionLength < loan.auctionLength) revert AuctionTooShort();
             // calculate the interest
-            (
-                uint256 lenderInterest,
-                uint256 protocolInterest
-            ) = _calculateInterest(loan);
+            (uint256 lenderInterest, uint256 protocolInterest) = _calculateInterest(loan);
             uint256 totalDebt = loan.debt + lenderInterest + protocolInterest;
             if (pool.poolBalance < totalDebt) revert PoolTooSmall();
             if (totalDebt < pool.minLoanSize) revert LoanTooSmall();
@@ -388,15 +324,8 @@ contract Lender is Ownable {
             pools[poolId].outstandingLoans += totalDebt;
 
             // update the pool balance of the old lender
-            bytes32 oldPoolId = getPoolId(
-                loan.lender,
-                loan.loanToken,
-                loan.collateralToken
-            );
-            _updatePoolBalance(
-                oldPoolId,
-                pools[oldPoolId].poolBalance + loan.debt + lenderInterest
-            );
+            bytes32 oldPoolId = getPoolId(loan.lender, loan.loanToken, loan.collateralToken);
+            _updatePoolBalance(oldPoolId, pools[oldPoolId].poolBalance + loan.debt + lenderInterest);
             pools[oldPoolId].outstandingLoans -= loan.debt;
 
             // transfer the protocol fee to the governance
@@ -441,19 +370,14 @@ contract Lender is Ownable {
             Loan memory loan = loans[loanId];
             // validate the loan
             if (msg.sender != loan.lender) revert Unauthorized();
-            if (loan.auctionStartTimestamp != type(uint256).max)
+            if (loan.auctionStartTimestamp != type(uint256).max) {
                 revert AuctionStarted();
+            }
 
             // set the auction start timestamp
             loans[loanId].auctionStartTimestamp = block.timestamp;
             emit AuctionStart(
-                loan.borrower,
-                loan.lender,
-                loanId,
-                loan.debt,
-                loan.collateral,
-                block.timestamp,
-                loan.auctionLength
+                loan.borrower, loan.lender, loanId, loan.debt, loan.collateral, block.timestamp, loan.auctionLength
             );
         }
     }
@@ -466,20 +390,19 @@ contract Lender is Ownable {
         // get the loan info
         Loan memory loan = loans[loanId];
         // validate the loan
-        if (loan.auctionStartTimestamp == type(uint256).max)
+        if (loan.auctionStartTimestamp == type(uint256).max) {
             revert AuctionNotStarted();
-        if (block.timestamp > loan.auctionStartTimestamp + loan.auctionLength)
+        }
+        if (block.timestamp > loan.auctionStartTimestamp + loan.auctionLength) {
             revert AuctionEnded();
+        }
         // calculate the current interest rate
         uint256 timeElapsed = block.timestamp - loan.auctionStartTimestamp;
-        uint256 currentAuctionRate = (MAX_INTEREST_RATE * timeElapsed) /
-            loan.auctionLength;
+        uint256 currentAuctionRate = (MAX_INTEREST_RATE * timeElapsed) / loan.auctionLength;
         // validate the rate
         if (pools[poolId].interestRate > currentAuctionRate) revert RateTooHigh();
         // calculate the interest
-        (uint256 lenderInterest, uint256 protocolInterest) = _calculateInterest(
-            loan
-        );
+        (uint256 lenderInterest, uint256 protocolInterest) = _calculateInterest(loan);
 
         // reject if the pool is not big enough
         uint256 totalDebt = loan.debt + lenderInterest + protocolInterest;
@@ -490,15 +413,8 @@ contract Lender is Ownable {
         pools[poolId].outstandingLoans += totalDebt;
 
         // now update the pool balance of the old lender
-        bytes32 oldPoolId = getPoolId(
-            loan.lender,
-            loan.loanToken,
-            loan.collateralToken
-        );
-        _updatePoolBalance(
-            oldPoolId,
-            pools[oldPoolId].poolBalance + loan.debt + lenderInterest
-        );
+        bytes32 oldPoolId = getPoolId(loan.lender, loan.loanToken, loan.collateralToken);
+        _updatePoolBalance(oldPoolId, pools[oldPoolId].poolBalance + loan.debt + lenderInterest);
         pools[oldPoolId].outstandingLoans -= loan.debt;
 
         // transfer the protocol fee to the governance
@@ -551,35 +467,23 @@ contract Lender is Ownable {
             // get the loan info
             Loan memory loan = loans[loanId];
             // validate the loan
-            if (loan.auctionStartTimestamp == type(uint256).max)
+            if (loan.auctionStartTimestamp == type(uint256).max) {
                 revert AuctionNotStarted();
-            if (
-                block.timestamp <
-                loan.auctionStartTimestamp + loan.auctionLength
-            ) revert AuctionNotEnded();
+            }
+            if (block.timestamp < loan.auctionStartTimestamp + loan.auctionLength) revert AuctionNotEnded();
             // calculate the fee
             uint256 govFee = (borrowerFee * loan.collateral) / 10000;
             // transfer the protocol fee to governance
             IERC20(loan.collateralToken).transfer(feeReceiver, govFee);
             // transfer the collateral tokens from the contract to the lender
-            IERC20(loan.collateralToken).transfer(
-                loan.lender,
-                loan.collateral - govFee
-            );
+            IERC20(loan.collateralToken).transfer(loan.lender, loan.collateral - govFee);
 
-            bytes32 poolId = keccak256(
-                abi.encode(loan.lender, loan.loanToken, loan.collateralToken)
-            );
+            bytes32 poolId = keccak256(abi.encode(loan.lender, loan.loanToken, loan.collateralToken));
 
             // update the pool outstanding loans
             pools[poolId].outstandingLoans -= loan.debt;
 
-            emit LoanSiezed(
-                loan.borrower,
-                loan.lender,
-                loanId,
-                loan.collateral
-            );
+            emit LoanSiezed(loan.borrower, loan.lender, loanId, loan.collateral);
             // delete the loan
             delete loans[loanId];
         }
@@ -592,13 +496,8 @@ contract Lender is Ownable {
         for (uint256 i = 0; i < refinances.length; i++) {
             uint256 loanId = refinances[i].loanId;
             bytes32 poolId = refinances[i].poolId;
-            bytes32 oldPoolId = keccak256(
-                abi.encode(
-                    loans[loanId].lender,
-                    loans[loanId].loanToken,
-                    loans[loanId].collateralToken
-                )
-            );
+            bytes32 oldPoolId =
+                keccak256(abi.encode(loans[loanId].lender, loans[loanId].loanToken, loans[loanId].collateralToken));
             uint256 debt = refinances[i].debt;
             uint256 collateral = refinances[i].collateral;
 
@@ -611,25 +510,20 @@ contract Lender is Ownable {
             Pool memory pool = pools[poolId];
             // validate the new loan
             if (pool.loanToken != loan.loanToken) revert TokenMismatch();
-            if (pool.collateralToken != loan.collateralToken)
+            if (pool.collateralToken != loan.collateralToken) {
                 revert TokenMismatch();
+            }
             if (pool.poolBalance < debt) revert LoanTooLarge();
             if (debt < pool.minLoanSize) revert LoanTooSmall();
             uint256 loanRatio = (debt * 10 ** 18) / collateral;
             if (loanRatio > pool.maxLoanRatio) revert RatioTooHigh();
 
             // calculate the interest
-            (
-                uint256 lenderInterest,
-                uint256 protocolInterest
-            ) = _calculateInterest(loan);
+            (uint256 lenderInterest, uint256 protocolInterest) = _calculateInterest(loan);
             uint256 debtToPay = loan.debt + lenderInterest + protocolInterest;
 
             // update the old lenders pool
-            _updatePoolBalance(
-                oldPoolId,
-                pools[oldPoolId].poolBalance + loan.debt + lenderInterest
-            );
+            _updatePoolBalance(oldPoolId, pools[oldPoolId].poolBalance + loan.debt + lenderInterest);
             pools[oldPoolId].outstandingLoans -= loan.debt;
 
             // now lets deduct our tokens from the new pool
@@ -639,11 +533,7 @@ contract Lender is Ownable {
             if (debtToPay > debt) {
                 // we owe more in debt so we need the borrower to give us more loan tokens
                 // transfer the loan tokens from the borrower to the contract
-                IERC20(loan.loanToken).transferFrom(
-                    msg.sender,
-                    address(this),
-                    debtToPay - debt
-                );
+                IERC20(loan.loanToken).transferFrom(msg.sender, address(this), debtToPay - debt);
             } else if (debtToPay < debt) {
                 // we have excess loan tokens so we give some back to the borrower
                 // first we take our borrower fee
@@ -660,28 +550,13 @@ contract Lender is Ownable {
             // update loan collateral
             if (collateral > loan.collateral) {
                 // transfer the collateral tokens from the borrower to the contract
-                IERC20(loan.collateralToken).transferFrom(
-                    msg.sender,
-                    address(this),
-                    collateral - loan.collateral
-                );
+                IERC20(loan.collateralToken).transferFrom(msg.sender, address(this), collateral - loan.collateral);
             } else if (collateral < loan.collateral) {
                 // transfer the collateral tokens from the contract to the borrower
-                IERC20(loan.collateralToken).transfer(
-                    msg.sender,
-                    loan.collateral - collateral
-                );
+                IERC20(loan.collateralToken).transfer(msg.sender, loan.collateral - collateral);
             }
 
-            emit Repaid(
-                msg.sender,
-                loan.lender,
-                loanId,
-                debt,
-                collateral,
-                loan.interestRate,
-                loan.startTimestamp
-            );
+            emit Repaid(msg.sender, loan.lender, loanId, debt, collateral, loan.interestRate, loan.startTimestamp);
 
             loans[loanId].collateral = collateral;
             // update loan interest rate
@@ -696,15 +571,7 @@ contract Lender is Ownable {
             loans[loanId].lender = pool.lender;
             // update pool balance
             pools[poolId].poolBalance -= debt;
-            emit Borrowed(
-                msg.sender,
-                pool.lender,
-                loanId,
-                debt,
-                collateral,
-                pool.interestRate,
-                block.timestamp
-            );
+            emit Borrowed(msg.sender, pool.lender, loanId, debt, collateral, pool.interestRate, block.timestamp);
             emit Refinanced(loanId);
         }
     }
@@ -717,9 +584,7 @@ contract Lender is Ownable {
     /// @param l the loan to calculate for
     /// @return interest the interest accrued
     /// @return fees the fees accrued
-    function _calculateInterest(
-        Loan memory l
-    ) internal view returns (uint256 interest, uint256 fees) {
+    function _calculateInterest(Loan memory l) internal view returns (uint256 interest, uint256 fees) {
         uint256 timeElapsed = block.timestamp - l.startTimestamp;
         interest = (l.interestRate * l.debt * timeElapsed) / 10000 / 365 days;
         fees = (lenderFee * interest) / 10000;

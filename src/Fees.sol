@@ -13,8 +13,7 @@ contract Fees {
     address public immutable staking;
 
     /// uniswap v3 router
-    ISwapRouter public constant swapRouter =
-        ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);
+    ISwapRouter public constant swapRouter = ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);
 
     constructor(address _weth, address _staking) {
         WETH = _weth;
@@ -27,17 +26,16 @@ contract Fees {
         require(_profits != WETH, "not allowed");
         uint256 amount = IERC20(_profits).balanceOf(address(this));
 
-        ISwapRouter.ExactInputSingleParams memory params = ISwapRouter
-            .ExactInputSingleParams({
-                tokenIn: _profits,
-                tokenOut: WETH,
-                fee: 3000,
-                recipient: address(this),
-                deadline: block.timestamp,
-                amountIn: amount,
-                amountOutMinimum: 0,
-                sqrtPriceLimitX96: 0
-            });
+        ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+            tokenIn: _profits,
+            tokenOut: WETH,
+            fee: 3000,
+            recipient: address(this),
+            deadline: block.timestamp,
+            amountIn: amount,
+            amountOutMinimum: 0,
+            sqrtPriceLimitX96: 0
+        });
 
         amount = swapRouter.exactInputSingle(params);
         IERC20(WETH).transfer(staking, IERC20(WETH).balanceOf(address(this)));

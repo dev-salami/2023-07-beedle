@@ -9,12 +9,11 @@ interface FeeDistribution {
 }
 
 contract Staking is Ownable {
-
     /// @notice the balance of reward tokens
     uint256 public balance = 0;
     /// @notice the index of the last update
     uint256 public index = 0;
-    
+
     /// @notice mapping of user indexes
     mapping(address => uint256) public supplyIndex;
 
@@ -22,7 +21,7 @@ contract Staking is Ownable {
     mapping(address => uint256) public balances;
     /// @notice mapping of user claimable rewards
     mapping(address => uint256) public claimable;
-    
+
     /// @notice the staking token
     IERC20 public immutable TKN;
     /// @notice the reward token
@@ -32,10 +31,10 @@ contract Staking is Ownable {
         TKN = IERC20(_token);
         WETH = IERC20(_weth);
     }
-    
+
     /// @notice deposit tokens to stake
     /// @param _amount the amount to deposit
-    function deposit(uint _amount) external {
+    function deposit(uint256 _amount) external {
         TKN.transferFrom(msg.sender, address(this), _amount);
         updateFor(msg.sender);
         balances[msg.sender] += _amount;
@@ -43,12 +42,12 @@ contract Staking is Ownable {
 
     /// @notice withdraw tokens from stake
     /// @param _amount the amount to withdraw
-    function withdraw(uint _amount) external {
+    function withdraw(uint256 _amount) external {
         updateFor(msg.sender);
         balances[msg.sender] -= _amount;
         TKN.transfer(msg.sender, _amount);
     }
-    
+
     /// @notice claim rewards
     function claim() external {
         updateFor(msg.sender);
@@ -56,7 +55,7 @@ contract Staking is Ownable {
         claimable[msg.sender] = 0;
         balance = WETH.balanceOf(address(this));
     }
-    
+
     /// @notice update the global index of earned rewards
     function update() public {
         uint256 totalSupply = TKN.balanceOf(address(this));
@@ -67,14 +66,14 @@ contract Staking is Ownable {
                 if (_diff > 0) {
                     uint256 _ratio = _diff * 1e18 / totalSupply;
                     if (_ratio > 0) {
-                      index = index + _ratio;
-                      balance = _balance;
+                        index = index + _ratio;
+                        balance = _balance;
                     }
                 }
             }
         }
     }
-    
+
     /// @notice update the index for a user
     /// @param recipient the user to update
     function updateFor(address recipient) public {
@@ -85,12 +84,11 @@ contract Staking is Ownable {
             supplyIndex[recipient] = index;
             uint256 _delta = index - _supplyIndex;
             if (_delta > 0) {
-              uint256 _share = _supplied * _delta / 1e18;
-              claimable[recipient] += _share;
+                uint256 _share = _supplied * _delta / 1e18;
+                claimable[recipient] += _share;
             }
         } else {
             supplyIndex[recipient] = index;
         }
     }
-
 }
